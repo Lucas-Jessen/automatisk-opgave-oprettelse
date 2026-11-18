@@ -5,7 +5,9 @@
 ## Brug
 
 1. Log ind med din Propbinder-konto. Bruger du Microsoft-login, kan du i stedet bruge bogmærket under "Logger du ind i Propbinder med Microsoft?".
-2. Udfyld Titel, Type, Timetype, Tid pr. opgave og Antal opgaver. Beskrivelse og Ejendomsnummer kan udelades. Ejendommen findes ud fra nummeret alene (f.eks. 40104), og navnet vises under feltet.
+2. Udfyld Titel, Type, Timetype, Tid pr. opgave og Antal opgaver. Beskrivelse kan udelades.
+   - **Fordel opgaverne på Cibus-ejendommene** er slået til fra start. Opgaverne fordeles på skift over alle Cibus-ejendomme (ejendomme i Propbinder, hvor kunden hedder "Cibus …"), i rækkefølge efter ejendomsnummer. Siden husker i browseren, hvilken ejendom der fik den seneste opgave, og næste kørsel fortsætter derfra. Rundgangen er pr. browser, ikke fælles for alle brugere.
+   - Slås fordelingen fra, kan man angive ét ejendomsnummer (f.eks. 40104) eller lade feltet stå tomt. Valget huskes i browseren.
 3. Tryk **Opret opgaver** og bekræft.
 
 Opgaverne lægges i forlængelse af hinanden, og den sidste slutter som standard nu. Hver opgave får en tidsregistrering på det angivne antal minutter. Som standard markeres de som udført. Siden advarer, hvis tidsrummet overlapper dine andre tidsregistreringer. Der kan oprettes højst 200 opgaver ad gangen.

@@ -38,6 +38,8 @@ input::placeholder,textarea::placeholder{color:#72877e;opacity:1}
 .check{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:400}
 .check input{width:22px;min-height:22px;flex-shrink:0}
 .hint{font-size:13px;color:var(--muted);margin:0;font-weight:400}
+.cibus-box{display:grid;gap:6px;padding:14px 16px;background:var(--soft);border:1px solid var(--border);border-radius:9px}
+.cibus-box .hint{padding-left:32px}
 .summary{margin:22px 0 0;padding:16px 20px;background:#e7f0eb;border-left:3px solid var(--green);font-size:14px}
 .summary.warn{background:#fbecea;border-color:var(--red)}
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
@@ -94,7 +96,11 @@ footer{font-size:12px;color:var(--muted);padding:25px 30px 35px}
         <label class="wide">Beskrivelse <span class="opt">(valgfri)</span><textarea id="description" placeholder="F.eks. Jeg har brugt 3 minutter pr. mail på disse ejendomme ..."></textarea></label>
         <label>Type *<select id="type" required><option value="">Henter typer ...</option></select></label>
         <label>Timetype *<select id="pricegroup" required><option value="">Henter timetyper ...</option></select></label>
-        <label class="wide">Ejendomsnummer <span class="opt">(valgfri)</span><input id="property" list="property-list" inputmode="numeric" placeholder="F.eks. 40104" autocomplete="off"><datalist id="property-list"></datalist><span class="hint" id="property-name" aria-live="polite"></span></label>
+        <div class="wide cibus-box">
+          <label class="check"><input id="cibus" type="checkbox" checked> Fordel opgaverne på Cibus-ejendommene</label>
+          <p class="hint" id="cibus-info"></p>
+        </div>
+        <label class="wide" id="property-field">Ejendomsnummer <span class="opt">(valgfri)</span><input id="property" list="property-list" inputmode="numeric" placeholder="F.eks. 40104" autocomplete="off"><datalist id="property-list"></datalist><span class="hint" id="property-name" aria-live="polite"></span></label>
         <label>Tid pr. opgave (minutter) *<input id="minutes" type="number" min="1" max="480" step="1" inputmode="numeric" required placeholder="f.eks. 3"></label>
         <label>Antal opgaver *<input id="count" type="number" min="1" max="200" step="1" inputmode="numeric" required placeholder="f.eks. 10"></label>
         <label class="wide">Første opgave starter<input id="start" type="datetime-local" step="60"><span class="hint">Opgaverne lægges i forlængelse af hinanden. Som standard slutter den sidste opgave nu.</span></label>
@@ -122,6 +128,14 @@ const STATUS_TODO = '7cb83847-96ee-4567-8555-b9d770ff16c0'; // "Skal udføres"
 const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
 const MAX_COUNT = 200;
 const TOKEN_KEY = 'pb-bearer';
+const CIBUS_CUSTOMER = /^cibus/i;           // Propbinder customer name on the Cibus properties
+const ROTATION_KEY = 'cibus-last-number';   // last Cibus property number a task was created on
+const CIBUS_PREF_KEY = 'cibus-enabled';
+
+const local = {
+  get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+};
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -132,7 +146,8 @@ const store = {
 
 let bearer = null;          // "Bearer <token>"
 let me = null;              // { id, name, departmentId }
-let properties = [];        // [{ id, label }]
+let properties = [];        // [{ id, number, name, cibus }]
+let cibusProperties = [];   // the Cibus subset, sorted by number
 let busy = false;
 
 function normalizeBearer(value) {
@@ -249,8 +264,13 @@ async function loadData() {
     (priceGroups || []).map((p) => ({ value: p.priceGroupId, label: String(p.name).trim() })),
     { placeholder: 'Vælg timetype', preferred: /^Abonnements opgaver$/i });
 
-  properties = (propertyList || []).map((p) => ({ id: p.id, number: String(p.number || '').trim(), name: String(p.name || '').trim() }))
-    .sort((a, b) => a.number.localeCompare(b.number, 'da', { numeric: true }));
+  properties = (propertyList || []).map((p) => ({
+    id: p.id,
+    number: String(p.number || '').trim(),
+    name: String(p.name || '').trim(),
+    cibus: CIBUS_CUSTOMER.test((p.propertyCustomer && p.propertyCustomer.name) || ''),
+  })).sort((a, b) => a.number.localeCompare(b.number, 'da', { numeric: true }));
+  cibusProperties = properties.filter((p) => p.cibus);
   // Suggestions insert just the number; the name is shown as the option's label.
   $('property-list').replaceChildren(...properties.map((p) => new Option(p.name, p.number)));
 }
@@ -261,6 +281,9 @@ async function start() {
   show('loading-view');
   try {
     await loadData();
+    $('cibus').checked = cibusProperties.length > 0 && local.get(CIBUS_PREF_KEY) !== 'off';
+    $('cibus').disabled = cibusProperties.length === 0;
+    updateCibus();
     setDefaultStart(true);
     show('form-view');
     updateSummary();
@@ -311,6 +334,42 @@ function updatePropertyName() {
 }
 $('property').addEventListener('input', updatePropertyName);
 
+// ---------- Cibus rotation ----------
+// Tasks go round-robin over the Cibus properties sorted by number. The last number used is
+// remembered in this browser, so the next batch continues with the following property.
+
+const cibusOn = () => $('cibus').checked && cibusProperties.length > 0;
+
+function rotationStart() {
+  const last = local.get(ROTATION_KEY);
+  if (!last) return 0;
+  const next = cibusProperties.findIndex((p) => p.number.localeCompare(last, 'da', { numeric: true }) > 0);
+  return next === -1 ? 0 : next;
+}
+
+function cibusPlan(count) {
+  const first = rotationStart();
+  return Array.from({ length: count }, (_, i) => cibusProperties[(first + i) % cibusProperties.length]);
+}
+
+const short = (p) => `${p.number} ${p.name}`;
+
+function updateCibus() {
+  const on = cibusOn();
+  $('property-field').hidden = on;
+  const info = $('cibus-info');
+  if (!cibusProperties.length) { info.textContent = 'Der blev ikke fundet nogen Cibus-ejendomme i Propbinder.'; return; }
+  if (!on) { info.textContent = 'Slået fra. Opgaverne oprettes på den ejendom, du angiver herunder, eller uden ejendom.'; return; }
+  const next = cibusProperties[rotationStart()];
+  info.textContent = `Opgaverne fordeles på skift over ${cibusProperties.length} Cibus-ejendomme. Næste i rækken: ${short(next)}.`;
+}
+
+$('cibus').addEventListener('change', () => {
+  local.set(CIBUS_PREF_KEY, $('cibus').checked ? 'on' : 'off');
+  updateCibus();
+  updateSummary();
+});
+
 function validate() {
   const { minutes, count } = numbers();
   const errors = [];
@@ -319,7 +378,7 @@ function validate() {
   if (!$('pricegroup').value) errors.push('Mangler timetype');
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > 480) errors.push('Tid skal være et helt antal minutter (1-480)');
   if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) errors.push(`Antal opgaver skal være mellem 1 og ${MAX_COUNT}`);
-  if (selectedProperty().invalid) errors.push('Der findes ingen ejendom med det ejendomsnummer. Ret nummeret, eller tøm feltet');
+  if (!cibusOn() && selectedProperty().invalid) errors.push('Der findes ingen ejendom med det ejendomsnummer. Ret nummeret, eller tøm feltet');
   if (!$('start').value || Number.isNaN(new Date($('start').value).getTime())) errors.push('Mangler starttidspunkt');
   return errors;
 }
@@ -348,6 +407,12 @@ function updateSummary() {
   box.textContent = `${count} opgave${count === 1 ? '' : 'r'} á ${minutes} min = ${h ? `${h} t ` : ''}${m ? `${m} min` : ''}`.trim()
     + ` · ${dateText(first)} kl. ${clock(first)}–${clock(last)}${first.toDateString() !== last.toDateString() ? ` (${dateText(last)})` : ''}`
     + (count > MAX_COUNT ? ` · Højst ${MAX_COUNT} ad gangen` : '');
+  if (cibusOn() && count <= MAX_COUNT) {
+    const plan = cibusPlan(count);
+    const distinct = new Set(plan.map((p) => p.number)).size;
+    box.textContent += ` · Fordeles på ${distinct} Cibus-ejendom${distinct === 1 ? '' : 'me'}: ${short(plan[0])}`
+      + (count > 1 ? ` … ${short(plan[plan.length - 1])}` : '');
+  }
 }
 
 ['minutes', 'count'].forEach((id) => $(id).addEventListener('input', () => { setDefaultStart(false); updateSummary(); }));
@@ -438,9 +503,12 @@ $('create').addEventListener('click', async () => {
     description: $('description').value.trim(),
     typeId: $('type').value,
     priceGroupId: $('pricegroup').value,
-    propertyId: selectedProperty().id,
     done: $('done').checked,
   };
+  // One property per task: the Cibus rotation, or the single property (or none) from the field.
+  const useCibus = cibusOn();
+  const single = useCibus ? null : selectedProperty();
+  const targets = useCibus ? cibusPlan(all.length) : all.map(() => (single.id ? single : null));
 
   busy = true;
   $('create').disabled = true;
@@ -453,7 +521,10 @@ $('create').addEventListener('click', async () => {
       setMessage('Annulleret. Intet er oprettet.');
       return;
     }
-    if (!confirm(`Opret ${all.length} opgave${all.length === 1 ? '' : 'r'} i Propbinder med titlen "${input.title}"?`)) {
+    const where = useCibus
+      ? `fordelt på ${new Set(targets.map((p) => p.number)).size} Cibus-ejendomme (fra ${short(targets[0])})`
+      : (single.id ? `på ${short(single)}` : 'uden ejendom');
+    if (!confirm(`Opret ${all.length} opgave${all.length === 1 ? '' : 'r'} i Propbinder med titlen "${input.title}", ${where}?`)) {
       setMessage('Annulleret. Intet er oprettet.');
       return;
     }
@@ -465,9 +536,11 @@ $('create').addEventListener('click', async () => {
     for (let i = 0; i < all.length; i++) {
       setMessage(`Opretter opgave ${i + 1} af ${all.length} ...`);
       try {
-        await createOne(input, all[i]);
+        const target = targets[i];
+        await createOne({ ...input, propertyId: target ? target.id : null }, all[i]);
         created++;
-        log(`Opgave ${i + 1}: oprettet (${clock(all[i].start)}–${clock(all[i].end)})`);
+        if (useCibus) local.set(ROTATION_KEY, target.number);
+        log(`Opgave ${i + 1}: oprettet (${clock(all[i].start)}–${clock(all[i].end)})${target ? ` · ${short(target)}` : ''}`);
       } catch (error) {
         log(`Opgave ${i + 1}: ${error.message}`, true);
         setMessage(`Stoppet efter fejl. ${created} af ${all.length} opgaver er oprettet. Tjek Propbinder, før du prøver igen, så du ikke får dobbelte opgaver.`, 'err');
@@ -479,6 +552,7 @@ $('create').addEventListener('click', async () => {
     setMessage(`Færdig: ${created} opgave${created === 1 ? '' : 'r'} er oprettet i Propbinder.`, 'ok');
     startTouched = false;
     setDefaultStart(true);
+    updateCibus();
     updateSummary();
   } catch (error) {
     setMessage(error.message, 'err');
