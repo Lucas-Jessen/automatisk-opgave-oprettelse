@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Automatisk opgave oprettelse i Propbinder - Forenede Service</title>
+<style>
+:root{--ink:#213b38;--green:#205345;--blue:#347d92;--soft:#eef4f1;--border:#d3dfd9;--muted:#556d65;--paper:#fff;--bg:#f5f7f4;--red:#a3392f;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);line-height:1.5;font-size:16px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg)}
+button,input,textarea,select{font:inherit}
+button{min-height:46px;padding:10px 16px;border:1px solid var(--border);border-radius:9px;background:var(--paper);color:var(--ink);cursor:pointer;font-weight:550}
+button:hover{background:var(--soft)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #67a8b9;outline-offset:3px}
+button:disabled{opacity:.5;cursor:default}
+.primary{background:var(--green);color:#fff;border-color:var(--green)}
+.primary:hover{background:#173f34}
+.quiet{background:transparent;border-color:transparent;color:var(--muted)}
+#app{max-width:820px;margin:auto}
+header{padding:32px 36px 35px;background:var(--paper);border-bottom:1px solid var(--border)}
+.brand{display:flex;justify-content:space-between;gap:16px;align-items:center}
+.brand img{width:183px;height:auto}
+.user{font-size:13px;color:var(--muted);text-align:right;display:grid;justify-items:end;gap:2px}
+.user button{min-height:32px;padding:4px 10px;font-size:12px}
+h1{font-size:clamp(27px,5vw,40px);font-weight:600;letter-spacing:-1.2px;margin:29px 0 3px;line-height:1.15}
+header p{margin:8px 0 0;color:var(--muted)}
+h2{font-size:23px;font-weight:600;letter-spacing:-.5px;margin:5px 0 17px}
+main{padding:0 30px}
+main>section{padding:30px 0;border-bottom:1px solid var(--border)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.wide{grid-column:1/-1}
+label{display:grid;gap:6px;font-size:13px;font-weight:550}
+label .opt{font-weight:400;color:var(--muted)}
+input,textarea,select{width:100%;min-width:0;border:1px solid #b7cbc1;border-radius:8px;padding:11px 12px;min-height:46px;font-size:16px;background:var(--paper);color:var(--ink)}
+textarea{resize:vertical;min-height:110px}
+input::placeholder,textarea::placeholder{color:#72877e;opacity:1}
+.check{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:400}
+.check input{width:22px;min-height:22px;flex-shrink:0}
+.hint{font-size:13px;color:var(--muted);margin:0;font-weight:400}
+.summary{margin:22px 0 0;padding:16px 20px;background:#e7f0eb;border-left:3px solid var(--green);font-size:14px}
+.summary.warn{background:#fbecea;border-color:var(--red)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+.msg{min-height:1em;font-size:14px;margin:14px 0 0}
+.msg.err{color:var(--red)}
+.msg.ok{color:var(--green)}
+progress{width:100%;height:8px;display:block;border:0;border-radius:8px;overflow:hidden;accent-color:var(--green);background:#dfe8e2;margin-top:16px}
+progress::-webkit-progress-bar{background:#dfe8e2}
+progress::-webkit-progress-value{background:var(--green)}
+#log{list-style:none;padding:0;margin:16px 0 0;font-size:13px;max-height:260px;overflow:auto}
+#log li{padding:5px 0;border-top:1px solid var(--border)}
+#log li.err{color:var(--red)}
+details{margin-top:22px;font-size:14px;color:var(--muted)}
+details a.bm{display:inline-block;margin:10px 0;padding:8px 14px;border:1px dashed var(--blue);border-radius:9px;color:var(--blue);text-decoration:none;font-weight:600}
+footer{font-size:12px;color:var(--muted);padding:25px 30px 35px}
+[hidden]{display:none!important}
+@media(max-width:600px){header{padding:24px 16px}.brand img{width:150px}main{padding:0 16px}.grid{grid-template-columns:1fr}.wide{grid-column:auto}.actions>button{width:100%}footer{padding:24px 16px}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">
+      <img src="logo.png" alt="Forenede Service">
+      <div class="user" id="user" hidden><span id="user-name"></span><button type="button" class="quiet" id="logout">Log ud</button></div>
+    </div>
+    <h1>Automatisk opgave oprettelse i Propbinder</h1>
+    <p>Opret mange ens opgaver på én gang, med tidsregistrering på hver opgave.</p>
+  </header>
+
+  <main>
+    <!-- Login -->
+    <section id="login-view" hidden>
+      <h2>Log ind med din Propbinder-konto</h2>
+      <form id="login-form" class="grid" autocomplete="on">
+        <label class="wide">E-mail<input id="email" type="email" autocomplete="username" required></label>
+        <label class="wide">Adgangskode<input id="password" type="password" autocomplete="current-password" required></label>
+        <div class="actions wide"><button class="primary" type="submit" id="login-btn">Log ind</button></div>
+      </form>
+      <p class="msg err" id="login-msg" role="alert"></p>
+      <p class="hint">Adgangskoden sendes direkte til Propbinder og gemmes ikke. Opgaverne oprettes i dit navn, ligesom når du opretter dem i Propbinder.</p>
+      <details>
+        <summary>Logger du ind i Propbinder med Microsoft?</summary>
+        <p>Så kan du bruge denne genvej i stedet. Træk knappen herunder op i din bogmærkelinje. Åbn derefter Propbinder, hvor du er logget ind, og klik på bogmærket. Så åbnes denne side, og du er logget ind.</p>
+        <a class="bm" id="bookmarklet" href="#">Opgaver → masseopret</a>
+      </details>
+    </section>
+
+    <!-- Form -->
+    <section id="form-view" hidden>
+      <h2>Opgave</h2>
+      <form id="task-form" class="grid" novalidate>
+        <label class="wide">Titel *<input id="title" maxlength="200" required placeholder="F.eks. Håndtering af mails"></label>
+        <label class="wide">Beskrivelse <span class="opt">(valgfri)</span><textarea id="description" placeholder="F.eks. Jeg har brugt 3 minutter pr. mail på disse ejendomme ..."></textarea></label>
+        <label>Type *<select id="type" required><option value="">Henter typer ...</option></select></label>
+        <label>Timetype *<select id="pricegroup" required><option value="">Henter timetyper ...</option></select></label>
+        <label class="wide">Ejendom <span class="opt">(valgfri)</span><input id="property" list="property-list" placeholder="Søg på nummer eller navn" autocomplete="off"><datalist id="property-list"></datalist></label>
+        <label>Tid pr. opgave (minutter) *<input id="minutes" type="number" min="1" max="480" step="1" inputmode="numeric" required placeholder="f.eks. 3"></label>
+        <label>Antal opgaver *<input id="count" type="number" min="1" max="200" step="1" inputmode="numeric" required placeholder="f.eks. 10"></label>
+        <label class="wide">Første opgave starter<input id="start" type="datetime-local" step="60"><span class="hint">Opgaverne lægges i forlængelse af hinanden. Som standard slutter den sidste opgave nu.</span></label>
+        <label class="check wide"><input id="done" type="checkbox" checked> Markér opgaverne som udført</label>
+      </form>
+      <div class="summary" id="summary" hidden></div>
+      <div class="actions">
+        <button class="primary" type="button" id="create">Opret opgaver</button>
+        <button type="button" id="reset">Ryd felter</button>
+      </div>
+      <p class="msg" id="form-msg" role="status"></p>
+      <progress id="progress" value="0" max="1" hidden></progress>
+      <ul id="log"></ul>
+    </section>
+
+    <section id="loading-view"><p class="hint">Indlæser ...</p></section>
+  </main>
+  <footer>Forenede Service · Opgaverne oprettes direkte i Propbinder via din egen konto.</footer>
+</div>
+
+<script>
+'use strict';
+const API = 'https://propbinder-api.azurewebsites.net/';
+const STATUS_TODO = '7cb83847-96ee-4567-8555-b9d770ff16c0'; // "Skal udføres"
+const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+const MAX_COUNT = 200;
+const TOKEN_KEY = 'pb-bearer';
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} },
+  del: (k) => { try { sessionStorage.removeItem(k); } catch {} },
+};
+
+let bearer = null;          // "Bearer <token>"
+let me = null;              // { id, name, departmentId }
+let properties = [];        // [{ id, label }]
+let busy = false;
+
+function normalizeBearer(value) {
+  const raw = String(value || '').trim().replace(/^Bearer\s+/i, '');
+  return raw ? `Bearer ${raw}` : null;
+}
+
+async function api(path, { method = 'GET', body } = {}) {
+  const response = await fetch(API + path, {
+    method,
+    headers: {
+      Accept: 'application/json',
+      ...(bearer ? { Authorization: bearer } : {}),
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await response.text();
+  if (response.status === 401 || response.status === 403) {
+    const error = new Error('Du er ikke længere logget ind i Propbinder. Log ind igen.');
+    error.auth = true;
+    throw error;
+  }
+  if (!response.ok) throw new Error(`Propbinder svarede ${response.status} på ${path.split('?')[0]}.`);
+  try { return text ? JSON.parse(text) : null; } catch { return text; }
+}
+
+function show(view) {
+  for (const id of ['login-view', 'form-view', 'loading-view']) $(id).hidden = id !== view;
+  $('user').hidden = view !== 'form-view';
+}
+
+// ---------- Login ----------
+
+function setupBookmarklet() {
+  const target = location.href.split('#')[0];
+  const code = `javascript:(function(){var b=localStorage.getItem('bearer');if(!b||location.hostname!=='app.propbinder.com'){alert('Åbn Propbinder (app.propbinder.com) og log ind først.');return;}window.open(${JSON.stringify(target)}+'#token='+encodeURIComponent(b.replace(/^Bearer\\s+/i,'')),'_blank');})();`;
+  $('bookmarklet').href = code;
+  $('bookmarklet').addEventListener('click', (e) => { e.preventDefault(); alert('Træk knappen op i bogmærkelinjen i stedet for at klikke på den her.'); });
+}
+
+function takeTokenFromHash() {
+  const match = location.hash.match(/token=([^&]+)/);
+  if (!match) return;
+  store.set(TOKEN_KEY, normalizeBearer(decodeURIComponent(match[1])));
+  history.replaceState(null, '', location.pathname + location.search);
+}
+
+$('login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = $('login-btn');
+  $('login-msg').textContent = '';
+  button.disabled = true;
+  try {
+    bearer = null;
+    const result = await fetch(API + 'api/Website/Login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ email: $('email').value.trim(), password: $('password').value }),
+    });
+    if (!result.ok) throw new Error(result.status === 400 || result.status === 401 || result.status === 403
+      ? 'Forkert e-mail eller adgangskode.'
+      : `Propbinder svarede ${result.status}. Prøv igen.`);
+    const login = await result.json();
+    const token = normalizeBearer(login && login.bearer);
+    if (!token) throw new Error('Propbinder returnerede intet login.');
+    store.set(TOKEN_KEY, token);
+    $('password').value = '';
+    await start();
+  } catch (error) {
+    $('login-msg').textContent = error.message || 'Login fejlede.';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('logout').addEventListener('click', () => {
+  if (busy) return;
+  store.del(TOKEN_KEY);
+  bearer = null;
+  me = null;
+  show('login-view');
+});
+
+// ---------- Data ----------
+
+function fillSelect(select, items, { placeholder, preferred } = {}) {
+  select.replaceChildren();
+  if (placeholder) select.append(new Option(placeholder, ''));
+  for (const item of items) select.append(new Option(item.label, item.value));
+  if (preferred) {
+    const match = items.find((item) => preferred.test(item.label));
+    if (match) select.value = match.value;
+  }
+}
+
+async function loadData() {
+  const [info, users, types, priceGroups, propertyList] = await Promise.all([
+    api('api/WebSite/Company/User/UserInfo'),
+    api('api/Website/Company/User').catch(() => []),
+    api('api/Activity/ActivityTypes'),
+    api('api/Website/PriceGroup'),
+    api('api/PropertyLease/GetPropertyList').catch(() => []),
+  ]);
+  const id = info.StakeholderId || info.stakeholderId;
+  const self = (Array.isArray(users) ? users : []).find((user) => user.userId === id) || {};
+  me = { id, name: info.Name || info.name || self.name || '', departmentId: self.departmentId || null };
+  $('user-name').textContent = me.name;
+
+  fillSelect($('type'),
+    (types || []).map((t) => ({ value: t.id, label: String(t.name).trim() })).sort((a, b) => a.label.localeCompare(b.label, 'da')),
+    { placeholder: 'Vælg type', preferred: /^Inspektøropgaver$/i });
+  fillSelect($('pricegroup'),
+    (priceGroups || []).map((p) => ({ value: p.priceGroupId, label: String(p.name).trim() })),
+    { placeholder: 'Vælg timetype', preferred: /^Abonnements opgaver$/i });
+
+  properties = (propertyList || []).map((p) => ({ id: p.id, label: `${p.number || ''} ${p.name || ''}`.trim() }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'da', { numeric: true }));
+  $('property-list').replaceChildren(...properties.map((p) => new Option(p.label)));
+}
+
+async function start() {
+  bearer = store.get(TOKEN_KEY);
+  if (!bearer) { show('login-view'); return; }
+  show('loading-view');
+  try {
+    await loadData();
+    setDefaultStart(true);
+    show('form-view');
+    updateSummary();
+  } catch (error) {
+    store.del(TOKEN_KEY);
+    bearer = null;
+    show('login-view');
+    $('login-msg').textContent = error.auth ? error.message : `Kunne ikke hente data fra Propbinder: ${error.message}`;
+  }
+}
+
+// ---------- Form ----------
+
+const pad = (n) => String(n).padStart(2, '0');
+const toLocalInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const clock = (d) => `${pad(d.getHours())}.${pad(d.getMinutes())}`;
+const dateText = (d) => d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short', year: 'numeric' });
+
+let startTouched = false;
+function setDefaultStart(force) {
+  if (startTouched && !force) return;
+  const { minutes, count } = numbers();
+  const end = new Date();
+  end.setSeconds(0, 0);
+  const total = (minutes > 0 && count > 0) ? minutes * count : 0;
+  $('start').value = toLocalInput(new Date(end.getTime() - total * 60000));
+  if (force) startTouched = false;
+}
+
+function numbers() {
+  return { minutes: Number($('minutes').value), count: Number($('count').value) };
+}
+
+function selectedProperty() {
+  const text = $('property').value.trim();
+  if (!text) return { id: null };
+  const match = properties.find((p) => p.label === text);
+  return match ? { id: match.id, label: match.label } : { invalid: true };
+}
+
+function validate() {
+  const { minutes, count } = numbers();
+  const errors = [];
+  if (!$('title').value.trim()) errors.push('Mangler titel');
+  if (!$('type').value) errors.push('Mangler type');
+  if (!$('pricegroup').value) errors.push('Mangler timetype');
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 480) errors.push('Tid skal være et helt antal minutter (1-480)');
+  if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) errors.push(`Antal opgaver skal være mellem 1 og ${MAX_COUNT}`);
+  if (selectedProperty().invalid) errors.push('Ejendommen findes ikke. Vælg den fra listen, eller tøm feltet');
+  if (!$('start').value || Number.isNaN(new Date($('start').value).getTime())) errors.push('Mangler starttidspunkt');
+  return errors;
+}
+
+function slots() {
+  const { minutes, count } = numbers();
+  const first = new Date($('start').value);
+  return Array.from({ length: count }, (_, i) => {
+    const start = new Date(first.getTime() + i * minutes * 60000);
+    return { start, end: new Date(start.getTime() + minutes * 60000) };
+  });
+}
+
+function updateSummary() {
+  const box = $('summary');
+  const { minutes, count } = numbers();
+  if (!(minutes > 0 && count > 0) || !$('start').value) { box.hidden = true; return; }
+  const all = slots();
+  const first = all[0].start;
+  const last = all[all.length - 1].end;
+  const total = minutes * count;
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  box.classList.remove('warn');
+  box.hidden = false;
+  box.textContent = `${count} opgave${count === 1 ? '' : 'r'} á ${minutes} min = ${h ? `${h} t ` : ''}${m ? `${m} min` : ''}`.trim()
+    + ` · ${dateText(first)} kl. ${clock(first)}–${clock(last)}${first.toDateString() !== last.toDateString() ? ` (${dateText(last)})` : ''}`
+    + (count > MAX_COUNT ? ` · Højst ${MAX_COUNT} ad gangen` : '');
+}
+
+['minutes', 'count'].forEach((id) => $(id).addEventListener('input', () => { setDefaultStart(false); updateSummary(); }));
+$('start').addEventListener('input', () => { startTouched = true; updateSummary(); });
+
+$('reset').addEventListener('click', () => {
+  if (busy) return;
+  for (const id of ['title', 'description', 'property', 'minutes', 'count']) $(id).value = '';
+  $('done').checked = true;
+  setDefaultStart(true);
+  updateSummary();
+  $('form-msg').textContent = '';
+  $('log').replaceChildren();
+  $('progress').hidden = true;
+});
+
+function log(text, isError) {
+  const li = document.createElement('li');
+  li.textContent = text;
+  if (isError) li.className = 'err';
+  $('log').prepend(li);
+}
+
+function setMessage(text, kind) {
+  $('form-msg').textContent = text;
+  $('form-msg').className = `msg ${kind || ''}`;
+}
+
+async function hasConflict(all) {
+  const body = {
+    activityId: EMPTY_GUID,
+    startTime: all[0].start.toISOString(),
+    endTime: all[all.length - 1].end.toISOString(),
+    note: '',
+    typeId: $('pricegroup').value,
+    userId: me.id,
+  };
+  try { return (await api('api/Activity/CheckConflict?isUpdate=false', { method: 'POST', body })) === true; } catch (error) {
+    if (error.auth) throw error;
+    return false; // The check is advisory, like in Propbinder itself.
+  }
+}
+
+async function createOne(input, slot) {
+  const activity = {
+    subject: input.title,
+    activityType: input.typeId,
+    status: STATUS_TODO,
+    customerId: null, caseId: null, offerId: null,
+    propertyId: input.propertyId, propertyLeaseId: null,
+    dueDateTime: slot.end.toISOString(),
+    startDateTime: slot.start.toISOString(),
+    endDateTime: slot.end.toISOString(),
+    priorityId: null,
+    description: input.description,
+    assignedToStakeholder: me.id,
+    recurring: null, recurrance: null, priceGroupId: null, note: '',
+    dvAccountPlanId: null, dvCategoryId: null,
+    departmentId: me.departmentId,
+    taskRecurrence: null, markAsInvoice: false, isNew: true, includeHolidays: false,
+    assetId: null, invoiceTypeId: null, activityInvoiceTypeId: null, invoiceCategoryId: null, markAsBillable: false,
+  };
+  const id = String(await api('api/Activity', { method: 'POST', body: activity })).replace(/"/g, '');
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('Propbinder returnerede ikke et opgave-id.');
+  await api('api/Activity/AddActivityTimeSpent', {
+    method: 'POST',
+    body: {
+      activityId: id,
+      stakeholderId: me.id,
+      priceGroupId: input.priceGroupId,
+      startTime: slot.start.toISOString(),
+      endTime: slot.end.toISOString(),
+      description: '',
+    },
+  });
+  if (input.done) await api(`api/Activity/MarkAsDone/${id}`, { method: 'PATCH', body: {} });
+  return id;
+}
+
+$('create').addEventListener('click', async () => {
+  if (busy) return;
+  const errors = validate();
+  if (errors.length) { setMessage(`${errors.join('. ')}.`, 'err'); return; }
+  const all = slots();
+  const input = {
+    title: $('title').value.trim(),
+    description: $('description').value.trim(),
+    typeId: $('type').value,
+    priceGroupId: $('pricegroup').value,
+    propertyId: selectedProperty().id,
+    done: $('done').checked,
+  };
+
+  busy = true;
+  $('create').disabled = true;
+  $('reset').disabled = true;
+  $('log').replaceChildren();
+  try {
+    setMessage('Tjekker for overlap med dine andre tidsregistreringer ...');
+    if (await hasConflict(all)
+      && !confirm('Tidsrummet overlapper med tidsregistreringer, du allerede har i Propbinder.\n\nVil du oprette opgaverne alligevel? Du kan også annullere og ændre "Første opgave starter".')) {
+      setMessage('Annulleret. Intet er oprettet.');
+      return;
+    }
+    if (!confirm(`Opret ${all.length} opgave${all.length === 1 ? '' : 'r'} i Propbinder med titlen "${input.title}"?`)) {
+      setMessage('Annulleret. Intet er oprettet.');
+      return;
+    }
+    const progress = $('progress');
+    progress.hidden = false;
+    progress.max = all.length;
+    progress.value = 0;
+    let created = 0;
+    for (let i = 0; i < all.length; i++) {
+      setMessage(`Opretter opgave ${i + 1} af ${all.length} ...`);
+      try {
+        await createOne(input, all[i]);
+        created++;
+        log(`Opgave ${i + 1}: oprettet (${clock(all[i].start)}–${clock(all[i].end)})`);
+      } catch (error) {
+        log(`Opgave ${i + 1}: ${error.message}`, true);
+        setMessage(`Stoppet efter fejl. ${created} af ${all.length} opgaver er oprettet. Tjek Propbinder, før du prøver igen, så du ikke får dobbelte opgaver.`, 'err');
+        if (error.auth) { store.del(TOKEN_KEY); }
+        return;
+      }
+      progress.value = i + 1;
+    }
+    setMessage(`Færdig: ${created} opgave${created === 1 ? '' : 'r'} er oprettet i Propbinder.`, 'ok');
+    startTouched = false;
+    setDefaultStart(true);
+    updateSummary();
+  } catch (error) {
+    setMessage(error.message, 'err');
+  } finally {
+    busy = false;
+    $('create').disabled = false;
+    $('reset').disabled = false;
+  }
+});
+
+window.addEventListener('beforeunload', (event) => { if (busy) { event.preventDefault(); event.returnValue = ''; } });
+
+takeTokenFromHash();
+setupBookmarklet();
+start();
+</script>
+</body>
+</html>
