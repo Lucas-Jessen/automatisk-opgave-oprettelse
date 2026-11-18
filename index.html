@@ -40,6 +40,15 @@ input::placeholder,textarea::placeholder{color:#72877e;opacity:1}
 .hint{font-size:13px;color:var(--muted);margin:0;font-weight:400}
 .cibus-box{display:grid;gap:6px;padding:14px 16px;background:var(--soft);border:1px solid var(--border);border-radius:9px}
 .cibus-box .hint{padding-left:32px}
+.cibus-box details{margin-top:6px;background:var(--paper);border:1px solid var(--border);border-radius:8px}
+.cibus-box summary{cursor:pointer;padding:10px 12px;font-weight:600;font-size:14px}
+.inna-head,.inna-row{display:grid;grid-template-columns:1fr 90px 90px;gap:8px;align-items:center;padding:6px 12px}
+.inna-head{font-size:12px;color:var(--muted);border-top:1px solid var(--border)}
+.inna-row{border-top:1px solid var(--border);font-size:14px}
+.inna-row span{min-width:0;overflow-wrap:anywhere}
+.inna-row input{min-height:38px;padding:6px 8px}
+.inna-row.active{background:#e7f0eb}
+@media(max-width:600px){.inna-head,.inna-row{grid-template-columns:1fr 64px 64px;padding:6px 8px}.cibus-box .hint{padding-left:0}}
 .summary{margin:22px 0 0;padding:16px 20px;background:#e7f0eb;border-left:3px solid var(--green);font-size:14px}
 .summary.warn{background:#fbecea;border-color:var(--red)}
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
@@ -100,9 +109,18 @@ footer{font-size:12px;color:var(--muted);padding:25px 30px 35px}
           <label class="check"><input id="cibus" type="checkbox" checked> Fordel opgaverne på Cibus-ejendommene</label>
           <p class="hint" id="cibus-info"></p>
         </div>
+        <div class="wide cibus-box">
+          <label class="check"><input id="inna" type="checkbox"> Opret på INNA-ejendomme med tid og antal pr. ejendom</label>
+          <p class="hint" id="inna-info"></p>
+          <details id="inna-details" hidden>
+            <summary id="inna-summary">INNA-ejendomme</summary>
+            <div class="inna-head"><span>Ejendom</span><span>Tid (min)</span><span>Antal</span></div>
+            <div id="inna-rows"></div>
+          </details>
+        </div>
         <label class="wide" id="property-field">Ejendomsnummer <span class="opt">(valgfri)</span><input id="property" list="property-list" inputmode="numeric" placeholder="F.eks. 40104" autocomplete="off"><datalist id="property-list"></datalist><span class="hint" id="property-name" aria-live="polite"></span></label>
-        <label>Tid pr. opgave (minutter) *<input id="minutes" type="number" min="1" max="480" step="1" inputmode="numeric" required placeholder="f.eks. 3"></label>
-        <label>Antal opgaver *<input id="count" type="number" min="1" max="200" step="1" inputmode="numeric" required placeholder="f.eks. 10"></label>
+        <label id="minutes-field">Tid pr. opgave (minutter) *<input id="minutes" type="number" min="1" max="480" step="1" inputmode="numeric" required placeholder="f.eks. 3"></label>
+        <label id="count-field">Antal opgaver *<input id="count" type="number" min="1" max="200" step="1" inputmode="numeric" required placeholder="f.eks. 10"></label>
         <label class="wide">Første opgave starter<input id="start" type="datetime-local" step="60"><span class="hint">Opgaverne lægges i forlængelse af hinanden. Som standard slutter den sidste opgave nu.</span></label>
         <label class="check wide"><input id="done" type="checkbox" checked> Markér opgaverne som udført</label>
       </form>
@@ -131,6 +149,14 @@ const TOKEN_KEY = 'pb-bearer';
 const CIBUS_CUSTOMER = /^cibus/i;           // Propbinder customer name on the Cibus properties
 const ROTATION_KEY = 'cibus-last-number';   // last Cibus property number a task was created on
 const CIBUS_PREF_KEY = 'cibus-enabled';
+// INNA properties have no common customer in Propbinder, so they are a fixed list of property
+// numbers (kundenummer). Add or remove numbers here when the portfolio changes.
+const INNA_NUMBERS = new Set([
+  '38195', '38183', '38201', '38199', '38184', '37642', '38191', '38189', '38196', '37612',
+  '38238', '38299', '38170', '38181', '38182', '38178', '38179', '38180', '38190', '38174',
+  '38175', '38185', '38173', '37893', '37855', '38203', '38194', '38198', '38177', '38186',
+  '38300', '38197', '38200', '38188', '38171', '38187', '38172',
+]);
 
 const local = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -148,6 +174,7 @@ let bearer = null;          // "Bearer <token>"
 let me = null;              // { id, name, departmentId }
 let properties = [];        // [{ id, number, name, cibus }]
 let cibusProperties = [];   // the Cibus subset, sorted by number
+let innaProperties = [];    // the INNA subset, sorted by number
 let busy = false;
 
 function normalizeBearer(value) {
@@ -269,8 +296,11 @@ async function loadData() {
     number: String(p.number || '').trim(),
     name: String(p.name || '').trim(),
     cibus: CIBUS_CUSTOMER.test((p.propertyCustomer && p.propertyCustomer.name) || ''),
+    inna: INNA_NUMBERS.has(String(p.number || '').trim()),
   })).sort((a, b) => a.number.localeCompare(b.number, 'da', { numeric: true }));
   cibusProperties = properties.filter((p) => p.cibus);
+  innaProperties = properties.filter((p) => p.inna);
+  renderInnaRows();
   // Suggestions insert just the number; the name is shown as the option's label.
   $('property-list').replaceChildren(...properties.map((p) => new Option(p.name, p.number)));
 }
@@ -283,7 +313,9 @@ async function start() {
     await loadData();
     $('cibus').checked = cibusProperties.length > 0 && local.get(CIBUS_PREF_KEY) !== 'off';
     $('cibus').disabled = cibusProperties.length === 0;
-    updateCibus();
+    $('inna').checked = false;
+    $('inna').disabled = innaProperties.length === 0;
+    updateModes();
     setDefaultStart(true);
     show('form-view');
     updateSummary();
@@ -305,11 +337,10 @@ const dateText = (d) => d.toLocaleDateString('da-DK', { day: 'numeric', month: '
 let startTouched = false;
 function setDefaultStart(force) {
   if (startTouched && !force) return;
-  const { minutes, count } = numbers();
+  const total = jobs().reduce((sum, job) => sum + job.minutes, 0);
   const end = new Date();
   end.setSeconds(0, 0);
-  const total = (minutes > 0 && count > 0) ? minutes * count : 0;
-  $('start').value = toLocalInput(new Date(end.getTime() - total * 60000));
+  $('start').value = toLocalInput(new Date(end.getTime() - (Number.isFinite(total) ? total : 0) * 60000));
   if (force) startTouched = false;
 }
 
@@ -334,11 +365,30 @@ function updatePropertyName() {
 }
 $('property').addEventListener('input', updatePropertyName);
 
+const short = (p) => `${p.number} ${p.name}`;
+
+// ---------- Modes ----------
+// "inna": time and count per INNA property. "cibus": count × minutes in rotation over the Cibus
+// properties. "single": count × minutes on one property (or none).
+
+const innaOn = () => $('inna').checked && innaProperties.length > 0;
+const cibusOn = () => !innaOn() && $('cibus').checked && cibusProperties.length > 0;
+const mode = () => (innaOn() ? 'inna' : cibusOn() ? 'cibus' : 'single');
+
+function updateModes() {
+  const m = mode();
+  $('property-field').hidden = m !== 'single';
+  $('minutes-field').hidden = m === 'inna';
+  $('count-field').hidden = m === 'inna';
+  $('inna-details').hidden = m !== 'inna';
+  if (m === 'inna') $('inna-details').open = true;
+  updateCibus();
+  updateInna();
+}
+
 // ---------- Cibus rotation ----------
 // Tasks go round-robin over the Cibus properties sorted by number. The last number used is
 // remembered in this browser, so the next batch continues with the following property.
-
-const cibusOn = () => $('cibus').checked && cibusProperties.length > 0;
 
 function rotationStart() {
   const last = local.get(ROTATION_KEY);
@@ -352,75 +402,157 @@ function cibusPlan(count) {
   return Array.from({ length: count }, (_, i) => cibusProperties[(first + i) % cibusProperties.length]);
 }
 
-const short = (p) => `${p.number} ${p.name}`;
-
 function updateCibus() {
-  const on = cibusOn();
-  $('property-field').hidden = on;
   const info = $('cibus-info');
   if (!cibusProperties.length) { info.textContent = 'Der blev ikke fundet nogen Cibus-ejendomme i Propbinder.'; return; }
-  if (!on) { info.textContent = 'Slået fra. Opgaverne oprettes på den ejendom, du angiver herunder, eller uden ejendom.'; return; }
+  if (!cibusOn()) { info.textContent = 'Slået fra. Opgaverne oprettes på den ejendom, du angiver herunder, eller uden ejendom.'; return; }
   const next = cibusProperties[rotationStart()];
   info.textContent = `Opgaverne fordeles på skift over ${cibusProperties.length} Cibus-ejendomme. Næste i rækken: ${short(next)}.`;
 }
 
 $('cibus').addEventListener('change', () => {
   local.set(CIBUS_PREF_KEY, $('cibus').checked ? 'on' : 'off');
-  updateCibus();
+  if ($('cibus').checked) $('inna').checked = false;
+  updateModes();
+  setDefaultStart(false);
   updateSummary();
 });
 
-function validate() {
+// ---------- INNA: time and count per property ----------
+
+function renderInnaRows() {
+  const rows = innaProperties.map((p) => {
+    const row = document.createElement('div');
+    row.className = 'inna-row';
+    row.dataset.id = p.id;
+    const name = document.createElement('span');
+    name.textContent = short(p);
+    const field = (kind, max) => {
+      const input = document.createElement('input');
+      Object.assign(input, { type: 'number', min: '0', max: String(max), step: '1', inputMode: 'numeric', placeholder: '0' });
+      input.dataset.kind = kind;
+      input.setAttribute('aria-label', `${kind === 'minutes' ? 'Tid i minutter' : 'Antal opgaver'} for ${short(p)}`);
+      return input;
+    };
+    row.append(name, field('minutes', 480), field('count', MAX_COUNT));
+    return row;
+  });
+  $('inna-rows').replaceChildren(...rows);
+}
+
+function innaRows() {
+  return [...$('inna-rows').children].map((row) => ({
+    row,
+    property: innaProperties.find((p) => p.id === row.dataset.id),
+    minutesText: row.querySelector('[data-kind="minutes"]').value.trim(),
+    countText: row.querySelector('[data-kind="count"]').value.trim(),
+  }));
+}
+
+function updateInna() {
+  const info = $('inna-info');
+  if (!innaProperties.length) { info.textContent = 'Der blev ikke fundet nogen INNA-ejendomme i Propbinder.'; return; }
+  const rows = innaRows();
+  for (const r of rows) r.row.classList.toggle('active', Number(r.countText) > 0);
+  const used = rows.filter((r) => Number(r.countText) > 0).length;
+  $('inna-summary').textContent = `INNA-ejendomme (${innaProperties.length})${used ? ` · ${used} valgt` : ''}`;
+  const missing = [...INNA_NUMBERS].filter((n) => !innaProperties.some((p) => p.number === n));
+  info.textContent = (innaOn()
+    ? 'Udfyld tid og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle.'
+    : `${innaProperties.length} ejendomme. Slå til for at angive tid og antal pr. ejendom.`)
+    + (missing.length ? ` Findes ikke i Propbinder: ${missing.join(', ')}.` : '');
+}
+
+$('inna').addEventListener('change', () => {
+  if ($('inna').checked) $('cibus').checked = false;
+  else $('cibus').checked = cibusProperties.length > 0 && local.get(CIBUS_PREF_KEY) !== 'off';
+  updateModes();
+  setDefaultStart(false);
+  updateSummary();
+});
+$('inna-rows').addEventListener('input', () => { updateInna(); setDefaultStart(false); updateSummary(); });
+
+// ---------- Plan ----------
+
+// The tasks to create, in order: [{ minutes, target }] where target is a property or null.
+function jobs() {
+  const m = mode();
+  if (m === 'inna') {
+    return innaRows().filter((r) => Number.isInteger(Number(r.countText)) && Number(r.countText) > 0)
+      .flatMap((r) => Array.from({ length: Math.min(Number(r.countText), MAX_COUNT + 1) }, () => ({ minutes: Number(r.minutesText), target: r.property })));
+  }
   const { minutes, count } = numbers();
+  if (!(Number.isInteger(count) && count > 0 && count <= MAX_COUNT)) return [];
+  if (m === 'cibus') return cibusPlan(count).map((target) => ({ minutes, target }));
+  const single = selectedProperty();
+  return Array.from({ length: count }, () => ({ minutes, target: single.id ? single : null }));
+}
+
+const validMinutes = (n) => Number.isInteger(n) && n >= 1 && n <= 480;
+
+function validate() {
   const errors = [];
   if (!$('title').value.trim()) errors.push('Mangler titel');
   if (!$('type').value) errors.push('Mangler type');
   if (!$('pricegroup').value) errors.push('Mangler timetype');
-  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 480) errors.push('Tid skal være et helt antal minutter (1-480)');
-  if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) errors.push(`Antal opgaver skal være mellem 1 og ${MAX_COUNT}`);
-  if (!cibusOn() && selectedProperty().invalid) errors.push('Der findes ingen ejendom med det ejendomsnummer. Ret nummeret, eller tøm feltet');
+  if (mode() === 'inna') {
+    const rows = innaRows().filter((r) => r.minutesText || r.countText);
+    if (!rows.some((r) => Number(r.countText) > 0)) errors.push('Angiv antal ud for mindst én INNA-ejendom');
+    for (const r of rows) {
+      const count = Number(r.countText);
+      if (!Number.isInteger(count) || count < 0 || count > MAX_COUNT) errors.push(`${r.property.number}: antal skal være et helt tal (0-${MAX_COUNT})`);
+      else if (count > 0 && !validMinutes(Number(r.minutesText))) errors.push(`${r.property.number}: tid skal være et helt antal minutter (1-480)`);
+    }
+  } else {
+    const { minutes, count } = numbers();
+    if (!validMinutes(minutes)) errors.push('Tid skal være et helt antal minutter (1-480)');
+    if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) errors.push(`Antal opgaver skal være mellem 1 og ${MAX_COUNT}`);
+    if (mode() === 'single' && selectedProperty().invalid) errors.push('Der findes ingen ejendom med det ejendomsnummer. Ret nummeret, eller tøm feltet');
+  }
+  if (jobs().length > MAX_COUNT) errors.push(`Højst ${MAX_COUNT} opgaver ad gangen i alt`);
   if (!$('start').value || Number.isNaN(new Date($('start').value).getTime())) errors.push('Mangler starttidspunkt');
   return errors;
 }
 
-function slots() {
-  const { minutes, count } = numbers();
-  const first = new Date($('start').value);
-  return Array.from({ length: count }, (_, i) => {
-    const start = new Date(first.getTime() + i * minutes * 60000);
-    return { start, end: new Date(start.getTime() + minutes * 60000) };
+// Back-to-back time slots for the jobs, from "Første opgave starter".
+function slots(list) {
+  let cursor = new Date($('start').value).getTime();
+  return list.map((job) => {
+    const start = new Date(cursor);
+    cursor += job.minutes * 60000;
+    return { ...job, start, end: new Date(cursor) };
   });
 }
 
 function updateSummary() {
   const box = $('summary');
-  const { minutes, count } = numbers();
-  if (!(minutes > 0 && count > 0) || !$('start').value) { box.hidden = true; return; }
-  const all = slots();
+  const list = jobs();
+  if (!list.length || !list.every((job) => validMinutes(job.minutes)) || !$('start').value) { box.hidden = true; return; }
+  const all = slots(list);
   const first = all[0].start;
   const last = all[all.length - 1].end;
-  const total = minutes * count;
+  const total = list.reduce((sum, job) => sum + job.minutes, 0);
   const h = Math.floor(total / 60);
   const m = total % 60;
-  box.classList.remove('warn');
+  const distinct = new Set(list.filter((job) => job.target).map((job) => job.target.number)).size;
+  const sameMinutes = list.every((job) => job.minutes === list[0].minutes);
   box.hidden = false;
-  box.textContent = `${count} opgave${count === 1 ? '' : 'r'} á ${minutes} min = ${h ? `${h} t ` : ''}${m ? `${m} min` : ''}`.trim()
+  box.textContent = `${list.length} opgave${list.length === 1 ? '' : 'r'}${sameMinutes ? ` á ${list[0].minutes} min` : ''} = ${h ? `${h} t ` : ''}${m ? `${m} min` : ''}`.trim()
     + ` · ${dateText(first)} kl. ${clock(first)}–${clock(last)}${first.toDateString() !== last.toDateString() ? ` (${dateText(last)})` : ''}`
-    + (count > MAX_COUNT ? ` · Højst ${MAX_COUNT} ad gangen` : '');
-  if (cibusOn() && count <= MAX_COUNT) {
-    const plan = cibusPlan(count);
-    const distinct = new Set(plan.map((p) => p.number)).size;
-    box.textContent += ` · Fordeles på ${distinct} Cibus-ejendom${distinct === 1 ? '' : 'me'}: ${short(plan[0])}`
-      + (count > 1 ? ` … ${short(plan[plan.length - 1])}` : '');
-  }
+    + (distinct ? ` · ${distinct} ejendom${distinct === 1 ? '' : 'me'}` : ' · uden ejendom')
+    + (mode() === 'cibus' ? `: ${short(list[0].target)}${list.length > 1 ? ` … ${short(list[list.length - 1].target)}` : ''}` : '')
+    + (list.length > MAX_COUNT ? ` · Højst ${MAX_COUNT} ad gangen` : '');
 }
 
 ['minutes', 'count'].forEach((id) => $(id).addEventListener('input', () => { setDefaultStart(false); updateSummary(); }));
+$('property').addEventListener('input', updateSummary);
 $('start').addEventListener('input', () => { startTouched = true; updateSummary(); });
 
 $('reset').addEventListener('click', () => {
   if (busy) return;
   for (const id of ['title', 'description', 'property', 'minutes', 'count']) $(id).value = '';
+  for (const input of $('inna-rows').querySelectorAll('input')) input.value = '';
+  updateInna();
   updatePropertyName();
   $('done').checked = true;
   setDefaultStart(true);
@@ -497,7 +629,8 @@ $('create').addEventListener('click', async () => {
   if (busy) return;
   const errors = validate();
   if (errors.length) { setMessage(`${errors.join('. ')}.`, 'err'); return; }
-  const all = slots();
+  // Each entry: { minutes, target, start, end }. Title and description are shared by all tasks.
+  const all = slots(jobs());
   const input = {
     title: $('title').value.trim(),
     description: $('description').value.trim(),
@@ -505,10 +638,8 @@ $('create').addEventListener('click', async () => {
     priceGroupId: $('pricegroup').value,
     done: $('done').checked,
   };
-  // One property per task: the Cibus rotation, or the single property (or none) from the field.
-  const useCibus = cibusOn();
-  const single = useCibus ? null : selectedProperty();
-  const targets = useCibus ? cibusPlan(all.length) : all.map(() => (single.id ? single : null));
+  const currentMode = mode();
+  const distinct = new Set(all.filter((job) => job.target).map((job) => job.target.number)).size;
 
   busy = true;
   $('create').disabled = true;
@@ -521,9 +652,11 @@ $('create').addEventListener('click', async () => {
       setMessage('Annulleret. Intet er oprettet.');
       return;
     }
-    const where = useCibus
-      ? `fordelt på ${new Set(targets.map((p) => p.number)).size} Cibus-ejendomme (fra ${short(targets[0])})`
-      : (single.id ? `på ${short(single)}` : 'uden ejendom');
+    const where = currentMode === 'cibus'
+      ? `fordelt på ${distinct} Cibus-ejendomme (fra ${short(all[0].target)})`
+      : currentMode === 'inna'
+        ? `fordelt på ${distinct} INNA-ejendom${distinct === 1 ? '' : 'me'}`
+        : (all[0].target ? `på ${short(all[0].target)}` : 'uden ejendom');
     if (!confirm(`Opret ${all.length} opgave${all.length === 1 ? '' : 'r'} i Propbinder med titlen "${input.title}", ${where}?`)) {
       setMessage('Annulleret. Intet er oprettet.');
       return;
@@ -536,11 +669,11 @@ $('create').addEventListener('click', async () => {
     for (let i = 0; i < all.length; i++) {
       setMessage(`Opretter opgave ${i + 1} af ${all.length} ...`);
       try {
-        const target = targets[i];
+        const { target } = all[i];
         await createOne({ ...input, propertyId: target ? target.id : null }, all[i]);
         created++;
-        if (useCibus) local.set(ROTATION_KEY, target.number);
-        log(`Opgave ${i + 1}: oprettet (${clock(all[i].start)}–${clock(all[i].end)})${target ? ` · ${short(target)}` : ''}`);
+        if (currentMode === 'cibus') local.set(ROTATION_KEY, target.number);
+        log(`Opgave ${i + 1}: oprettet (${clock(all[i].start)}–${clock(all[i].end)}, ${all[i].minutes} min)${target ? ` · ${short(target)}` : ''}`);
       } catch (error) {
         log(`Opgave ${i + 1}: ${error.message}`, true);
         setMessage(`Stoppet efter fejl. ${created} af ${all.length} opgaver er oprettet. Tjek Propbinder, før du prøver igen, så du ikke får dobbelte opgaver.`, 'err');
@@ -552,7 +685,7 @@ $('create').addEventListener('click', async () => {
     setMessage(`Færdig: ${created} opgave${created === 1 ? '' : 'r'} er oprettet i Propbinder.`, 'ok');
     startTouched = false;
     setDefaultStart(true);
-    updateCibus();
+    updateModes();
     updateSummary();
   } catch (error) {
     setMessage(error.message, 'err');
