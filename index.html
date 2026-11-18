@@ -94,7 +94,7 @@ footer{font-size:12px;color:var(--muted);padding:25px 30px 35px}
         <label class="wide">Beskrivelse <span class="opt">(valgfri)</span><textarea id="description" placeholder="F.eks. Jeg har brugt 3 minutter pr. mail på disse ejendomme ..."></textarea></label>
         <label>Type *<select id="type" required><option value="">Henter typer ...</option></select></label>
         <label>Timetype *<select id="pricegroup" required><option value="">Henter timetyper ...</option></select></label>
-        <label class="wide">Ejendom <span class="opt">(valgfri)</span><input id="property" list="property-list" placeholder="Søg på nummer eller navn" autocomplete="off"><datalist id="property-list"></datalist></label>
+        <label class="wide">Ejendomsnummer <span class="opt">(valgfri)</span><input id="property" list="property-list" inputmode="numeric" placeholder="F.eks. 40104" autocomplete="off"><datalist id="property-list"></datalist><span class="hint" id="property-name" aria-live="polite"></span></label>
         <label>Tid pr. opgave (minutter) *<input id="minutes" type="number" min="1" max="480" step="1" inputmode="numeric" required placeholder="f.eks. 3"></label>
         <label>Antal opgaver *<input id="count" type="number" min="1" max="200" step="1" inputmode="numeric" required placeholder="f.eks. 10"></label>
         <label class="wide">Første opgave starter<input id="start" type="datetime-local" step="60"><span class="hint">Opgaverne lægges i forlængelse af hinanden. Som standard slutter den sidste opgave nu.</span></label>
@@ -249,9 +249,10 @@ async function loadData() {
     (priceGroups || []).map((p) => ({ value: p.priceGroupId, label: String(p.name).trim() })),
     { placeholder: 'Vælg timetype', preferred: /^Abonnements opgaver$/i });
 
-  properties = (propertyList || []).map((p) => ({ id: p.id, label: `${p.number || ''} ${p.name || ''}`.trim() }))
-    .sort((a, b) => a.label.localeCompare(b.label, 'da', { numeric: true }));
-  $('property-list').replaceChildren(...properties.map((p) => new Option(p.label)));
+  properties = (propertyList || []).map((p) => ({ id: p.id, number: String(p.number || '').trim(), name: String(p.name || '').trim() }))
+    .sort((a, b) => a.number.localeCompare(b.number, 'da', { numeric: true }));
+  // Suggestions insert just the number; the name is shown as the option's label.
+  $('property-list').replaceChildren(...properties.map((p) => new Option(p.name, p.number)));
 }
 
 async function start() {
@@ -293,12 +294,22 @@ function numbers() {
   return { minutes: Number($('minutes').value), count: Number($('count').value) };
 }
 
+// Matches on the property number; text after the number (e.g. a pasted "40104 Lundvej 9") is ignored.
 function selectedProperty() {
   const text = $('property').value.trim();
   if (!text) return { id: null };
-  const match = properties.find((p) => p.label === text);
-  return match ? { id: match.id, label: match.label } : { invalid: true };
+  const number = (text.match(/^\d+/) || [])[0];
+  const match = number && properties.find((p) => p.number === number);
+  return match ? { id: match.id, number: match.number, name: match.name } : { invalid: true };
 }
+
+function updatePropertyName() {
+  const hint = $('property-name');
+  const property = selectedProperty();
+  hint.style.color = property.invalid ? 'var(--red)' : '';
+  hint.textContent = property.invalid ? 'Ingen ejendom med det nummer.' : (property.id ? `${property.number} · ${property.name}` : '');
+}
+$('property').addEventListener('input', updatePropertyName);
 
 function validate() {
   const { minutes, count } = numbers();
@@ -308,7 +319,7 @@ function validate() {
   if (!$('pricegroup').value) errors.push('Mangler timetype');
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > 480) errors.push('Tid skal være et helt antal minutter (1-480)');
   if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) errors.push(`Antal opgaver skal være mellem 1 og ${MAX_COUNT}`);
-  if (selectedProperty().invalid) errors.push('Ejendommen findes ikke. Vælg den fra listen, eller tøm feltet');
+  if (selectedProperty().invalid) errors.push('Der findes ingen ejendom med det ejendomsnummer. Ret nummeret, eller tøm feltet');
   if (!$('start').value || Number.isNaN(new Date($('start').value).getTime())) errors.push('Mangler starttidspunkt');
   return errors;
 }
@@ -345,6 +356,7 @@ $('start').addEventListener('input', () => { startTouched = true; updateSummary(
 $('reset').addEventListener('click', () => {
   if (busy) return;
   for (const id of ['title', 'description', 'property', 'minutes', 'count']) $(id).value = '';
+  updatePropertyName();
   $('done').checked = true;
   setDefaultStart(true);
   updateSummary();

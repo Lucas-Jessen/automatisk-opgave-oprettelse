@@ -5,7 +5,7 @@
 ## Brug
 
 1. Log ind med din Propbinder-konto. Bruger du Microsoft-login, kan du i stedet bruge bogmærket under "Logger du ind i Propbinder med Microsoft?".
-2. Udfyld Titel, Type, Timetype, Tid pr. opgave og Antal opgaver. Beskrivelse og Ejendom kan udelades.
+2. Udfyld Titel, Type, Timetype, Tid pr. opgave og Antal opgaver. Beskrivelse og Ejendomsnummer kan udelades. Ejendommen findes ud fra nummeret alene (f.eks. 40104), og navnet vises under feltet.
 3. Tryk **Opret opgaver** og bekræft.
 
 Opgaverne lægges i forlængelse af hinanden, og den sidste slutter som standard nu. Hver opgave får en tidsregistrering på det angivne antal minutter. Som standard markeres de som udført. Siden advarer, hvis tidsrummet overlapper dine andre tidsregistreringer. Der kan oprettes højst 200 opgaver ad gangen.
