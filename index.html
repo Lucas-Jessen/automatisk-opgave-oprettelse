@@ -112,9 +112,10 @@ footer{font-size:12px;color:var(--muted);padding:25px 30px 35px}
         <div class="wide cibus-box">
           <label class="check"><input id="inna" type="checkbox"> Opret på INNA-ejendomme med tid og antal pr. ejendom</label>
           <p class="hint" id="inna-info"></p>
+          <label class="check" id="inna-invoice-field" hidden><input id="inna-invoice" type="checkbox" checked> Skal faktureres</label>
           <details id="inna-details" hidden>
             <summary id="inna-summary">INNA-ejendomme</summary>
-            <div class="inna-head"><span>Ejendom</span><span>Tid (timer)</span><span>Antal</span></div>
+            <div class="inna-head"><span>Ejendom</span><span id="inna-time-head">Tid (timer)</span><span>Antal</span></div>
             <div id="inna-rows"></div>
           </details>
         </div>
@@ -385,13 +386,23 @@ const short = (p) => `${p.number} ${p.name}`;
 const innaOn = () => $('inna').checked && innaProperties.length > 0;
 const cibusOn = () => !innaOn() && $('cibus').checked && cibusProperties.length > 0;
 const mode = () => (innaOn() ? 'inna' : cibusOn() ? 'cibus' : 'single');
+const invoicing = () => innaOn() && $('inna-invoice').checked;
 
 function updateModes() {
   const m = mode();
   $('property-field').hidden = m !== 'single';
   $('minutes-field').hidden = m === 'inna';
   $('count-field').hidden = m === 'inna';
-  $('pricegroup-field').hidden = m === 'inna'; // INNA tasks are invoiced, not time-registered
+  // INNA with "Skal faktureres": invoiced in hours, no time registration (so no Timetype).
+  // INNA without it: plain tasks with a time registration in minutes, like Cibus.
+  const invoice = invoicing();
+  $('pricegroup-field').hidden = invoice;
+  $('inna-invoice-field').hidden = m !== 'inna';
+  $('inna-time-head').textContent = invoice ? 'Tid (timer)' : 'Tid (min)';
+  for (const input of $('inna-rows').querySelectorAll('[data-kind="time"]')) {
+    Object.assign(input, { step: invoice ? '0.25' : '1', max: String(invoice ? MAX_HOURS : 480), inputMode: invoice ? 'decimal' : 'numeric' });
+    input.setAttribute('aria-label', input.getAttribute('aria-label').replace(/^Tid i \w+/, invoice ? 'Tid i timer' : 'Tid i minutter'));
+  }
   $('inna-details').hidden = m !== 'inna';
   if (m === 'inna') $('inna-details').open = true;
   updateCibus();
@@ -443,10 +454,10 @@ function renderInnaRows() {
       const input = document.createElement('input');
       Object.assign(input, { type: 'number', min: '0', max: String(max), step, inputMode: step === '1' ? 'numeric' : 'decimal', placeholder: '0' });
       input.dataset.kind = kind;
-      input.setAttribute('aria-label', `${kind === 'hours' ? 'Tid i timer' : 'Antal opgaver'} for ${short(p)}`);
+      input.setAttribute('aria-label', `${kind === 'time' ? 'Tid i timer' : 'Antal opgaver'} for ${short(p)}`);
       return input;
     };
-    row.append(name, field('hours', MAX_HOURS, '0.25'), field('count', MAX_COUNT, '1'));
+    row.append(name, field('time', MAX_HOURS, '0.25'), field('count', MAX_COUNT, '1'));
     return row;
   });
   $('inna-rows').replaceChildren(...rows);
@@ -456,7 +467,7 @@ function innaRows() {
   return [...$('inna-rows').children].map((row) => ({
     row,
     property: innaProperties.find((p) => p.id === row.dataset.id),
-    hoursText: row.querySelector('[data-kind="hours"]').value.trim().replace(',', '.'),
+    timeText: row.querySelector('[data-kind="time"]').value.trim().replace(',', '.'),
     countText: row.querySelector('[data-kind="count"]').value.trim(),
   }));
 }
@@ -470,10 +481,12 @@ function updateInna() {
   $('inna-summary').textContent = `INNA-ejendomme (${innaProperties.length})${used ? ` · ${used} valgt` : ''}`;
   const missing = [...INNA_NUMBERS].filter((n) => !innaProperties.some((p) => p.number === n));
   const material = innaMaterial ? `"${innaMaterial.name}"` : `materiale ${INNA_MATERIAL_NUMBER}`;
-  info.textContent = (innaOn()
-    ? `Udfyld tid (timer) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Hver opgave faktureres: tiden sættes som antal af ${material}, og opgaven markeres som fakturerbar. Der laves ingen tidsregistrering.`
-    : `${innaProperties.length} ejendomme. Slå til for at angive tid og antal pr. ejendom.`)
-    + (innaOn() && !innaMaterial ? ` Materialet ${INNA_MATERIAL_NUMBER} blev ikke fundet i Propbinder, så INNA-opgaver kan ikke oprettes.` : '')
+  info.textContent = (!innaOn()
+    ? `${innaProperties.length} ejendomme. Slå til for at angive tid og antal pr. ejendom.`
+    : invoicing()
+      ? `Udfyld tid (timer) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Hver opgave faktureres: tiden sættes som antal af ${material}, og opgaven markeres som fakturerbar. Der laves ingen tidsregistrering.`
+      : 'Udfyld tid (minutter) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Opgaverne faktureres ikke, men får en tidsregistrering ligesom Cibus.')
+    + (invoicing() && !innaMaterial ? ` Materialet ${INNA_MATERIAL_NUMBER} blev ikke fundet i Propbinder, så der kan ikke faktureres.` : '')
     + (missing.length ? ` Findes ikke i Propbinder: ${missing.join(', ')}.` : '');
 }
 
@@ -485,19 +498,24 @@ $('inna').addEventListener('change', () => {
   updateSummary();
 });
 $('inna-rows').addEventListener('input', () => { updateInna(); setDefaultStart(false); updateSummary(); });
+$('inna-invoice').addEventListener('change', () => { updateModes(); setDefaultStart(false); updateSummary(); });
 
 // ---------- Plan ----------
 
 // The tasks to create, in order: [{ minutes, target, hours? }] where target is a property or null.
-// INNA tasks carry hours (the invoiced quantity); their planning slot is the same length.
+// Invoiced INNA tasks carry hours (the invoiced quantity); their planning slot is the same length.
+// Non-invoiced INNA tasks take the entered time as minutes, like Cibus.
 function jobs() {
   const m = mode();
   if (m === 'inna') {
+    const invoice = invoicing();
     return innaRows().filter((r) => Number.isInteger(Number(r.countText)) && Number(r.countText) > 0)
       .flatMap((r) => {
-        const hours = Number(r.hoursText);
-        return Array.from({ length: Math.min(Number(r.countText), MAX_COUNT + 1) },
-          () => ({ hours, minutes: Math.max(1, Math.round(hours * 60)), target: r.property }));
+        const time = Number(r.timeText);
+        const job = invoice
+          ? { hours: time, minutes: Math.max(1, Math.round(time * 60)), target: r.property }
+          : { minutes: time, target: r.property };
+        return Array.from({ length: Math.min(Number(r.countText), MAX_COUNT + 1) }, () => ({ ...job }));
       });
   }
   const { minutes, count } = numbers();
@@ -517,15 +535,18 @@ function validate() {
   const errors = [];
   if (!$('title').value.trim()) errors.push('Mangler titel');
   if (!$('type').value) errors.push('Mangler type');
-  if (mode() !== 'inna' && !$('pricegroup').value) errors.push('Mangler timetype');
+  const invoice = invoicing();
+  if (!invoice && !$('pricegroup').value) errors.push('Mangler timetype');
   if (mode() === 'inna') {
-    if (!innaMaterial) errors.push(`Materialet ${INNA_MATERIAL_NUMBER} findes ikke i Propbinder`);
-    const rows = innaRows().filter((r) => r.hoursText || r.countText);
+    if (invoice && !innaMaterial) errors.push(`Materialet ${INNA_MATERIAL_NUMBER} findes ikke i Propbinder`);
+    const rows = innaRows().filter((r) => r.timeText || r.countText);
     if (!rows.some((r) => Number(r.countText) > 0)) errors.push('Angiv antal ud for mindst én INNA-ejendom');
     for (const r of rows) {
       const count = Number(r.countText);
+      const time = Number(r.timeText);
       if (!Number.isInteger(count) || count < 0 || count > MAX_COUNT) errors.push(`${r.property.number}: antal skal være et helt tal (0-${MAX_COUNT})`);
-      else if (count > 0 && !validHours(Number(r.hoursText))) errors.push(`${r.property.number}: tid skal være et antal timer over 0 og højst ${MAX_HOURS} (f.eks. 0,5 eller 2)`);
+      else if (count > 0 && invoice && !validHours(time)) errors.push(`${r.property.number}: tid skal være et antal timer over 0 og højst ${MAX_HOURS} (f.eks. 0,5 eller 2)`);
+      else if (count > 0 && !invoice && !validMinutes(time)) errors.push(`${r.property.number}: tid skal være et helt antal minutter (1-480)`);
     }
   } else {
     const { minutes, count } = numbers();
@@ -551,7 +572,7 @@ function slots(list) {
 function updateSummary() {
   const box = $('summary');
   const list = jobs();
-  if (mode() === 'inna') {
+  if (invoicing()) {
     if (!list.length || !list.every((job) => validHours(job.hours))) { box.hidden = true; return; }
     const hours = list.reduce((sum, job) => sum + job.hours, 0);
     const distinctInna = new Set(list.map((job) => job.target.number)).size;
@@ -693,6 +714,7 @@ $('create').addEventListener('click', async () => {
     done: $('done').checked,
   };
   const currentMode = mode();
+  const invoice = invoicing();
   const distinct = new Set(all.filter((job) => job.target).map((job) => job.target.number)).size;
 
   busy = true;
@@ -700,8 +722,8 @@ $('create').addEventListener('click', async () => {
   $('reset').disabled = true;
   $('log').replaceChildren();
   try {
-    if (currentMode !== 'inna') setMessage('Tjekker for overlap med dine andre tidsregistreringer ...');
-    if (currentMode !== 'inna' && await hasConflict(all)
+    if (!invoice) setMessage('Tjekker for overlap med dine andre tidsregistreringer ...');
+    if (!invoice && await hasConflict(all)
       && !confirm('Tidsrummet overlapper med tidsregistreringer, du allerede har i Propbinder.\n\nVil du oprette opgaverne alligevel? Du kan også annullere og ændre "Første opgave starter".')) {
       setMessage('Annulleret. Intet er oprettet.');
       return;
@@ -709,7 +731,9 @@ $('create').addEventListener('click', async () => {
     const where = currentMode === 'cibus'
       ? `fordelt på ${distinct} Cibus-ejendomme (fra ${short(all[0].target)})`
       : currentMode === 'inna'
-        ? `fordelt på ${distinct} INNA-ejendom${distinct === 1 ? '' : 'me'}, med i alt ${hoursText(all.reduce((s, j) => s + j.hours, 0))} timer til fakturering`
+        ? `fordelt på ${distinct} INNA-ejendom${distinct === 1 ? '' : 'me'}, ${invoice
+          ? `med i alt ${hoursText(all.reduce((s, j) => s + j.hours, 0))} timer til fakturering`
+          : 'uden fakturering (med tidsregistrering)'}`
         : (all[0].target ? `på ${short(all[0].target)}` : 'uden ejendom');
     if (!confirm(`Opret ${all.length} opgave${all.length === 1 ? '' : 'r'} i Propbinder med titlen "${input.title}", ${where}?`)) {
       setMessage('Annulleret. Intet er oprettet.');
@@ -728,11 +752,11 @@ $('create').addEventListener('click', async () => {
           ...input,
           propertyId: target ? target.id : null,
           customerId: target ? target.customerId : null,
-          invoiceHours: currentMode === 'inna' ? all[i].hours : null,
+          invoiceHours: invoice ? all[i].hours : null,
         }, all[i]);
         created++;
         if (currentMode === 'cibus') local.set(ROTATION_KEY, target.number);
-        log(currentMode === 'inna'
+        log(invoice
           ? `Opgave ${i + 1}: oprettet · ${short(target)} · ${hoursText(all[i].hours)} t til fakturering`
           : `Opgave ${i + 1}: oprettet (${clock(all[i].start)}–${clock(all[i].end)}, ${all[i].minutes} min)${target ? ` · ${short(target)}` : ''}`);
       } catch (error) {
