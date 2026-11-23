@@ -387,6 +387,11 @@ const innaOn = () => $('inna').checked && innaProperties.length > 0;
 const cibusOn = () => !innaOn() && $('cibus').checked && cibusProperties.length > 0;
 const mode = () => (innaOn() ? 'inna' : cibusOn() ? 'cibus' : 'single');
 const invoicing = () => innaOn() && $('inna-invoice').checked;
+// Only single-property tasks get a time registration. Cibus tasks and non-invoiced INNA tasks
+// note the time in the description instead ("Tid brugt: ..."); invoiced INNA tasks get a material line.
+const registersTime = () => mode() === 'single';
+const minutesText = (n) => `${n} minut${n === 1 ? '' : 'ter'}`;
+const withTimeNote = (description, minutes) => `${description ? `${description}\n\n` : ''}Tid brugt: ${minutesText(minutes)}`;
 
 function updateModes() {
   const m = mode();
@@ -396,7 +401,7 @@ function updateModes() {
   // INNA with "Skal faktureres": invoiced in hours, no time registration (so no Timetype).
   // INNA without it: plain tasks with a time registration in minutes, like Cibus.
   const invoice = invoicing();
-  $('pricegroup-field').hidden = invoice;
+  $('pricegroup-field').hidden = !registersTime(); // Timetype is only used for time registrations
   $('inna-invoice-field').hidden = m !== 'inna';
   $('inna-time-head').textContent = invoice ? 'Tid (timer)' : 'Tid (min)';
   for (const input of $('inna-rows').querySelectorAll('[data-kind="time"]')) {
@@ -430,7 +435,7 @@ function updateCibus() {
   if (!cibusProperties.length) { info.textContent = 'Der blev ikke fundet nogen Cibus-ejendomme i Propbinder.'; return; }
   if (!cibusOn()) { info.textContent = 'Slået fra. Opgaverne oprettes på den ejendom, du angiver herunder, eller uden ejendom.'; return; }
   const next = cibusProperties[rotationStart()];
-  info.textContent = `Opgaverne fordeles på skift over ${cibusProperties.length} Cibus-ejendomme. Næste i rækken: ${short(next)}.`;
+  info.textContent = `Opgaverne fordeles på skift over ${cibusProperties.length} Cibus-ejendomme. Næste i rækken: ${short(next)}. Tiden skrives nederst i beskrivelsen som "Tid brugt: …" (ingen tidsregistrering).`;
 }
 
 $('cibus').addEventListener('change', () => {
@@ -485,7 +490,7 @@ function updateInna() {
     ? `${innaProperties.length} ejendomme. Slå til for at angive tid og antal pr. ejendom.`
     : invoicing()
       ? `Udfyld tid (timer) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Hver opgave faktureres: tiden sættes som antal af ${material}, og opgaven markeres som fakturerbar. Der laves ingen tidsregistrering.`
-      : 'Udfyld tid (minutter) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Opgaverne faktureres ikke, men får en tidsregistrering ligesom Cibus.')
+      : 'Udfyld tid (minutter) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Opgaverne faktureres ikke. Ligesom ved Cibus skrives tiden nederst i beskrivelsen som "Tid brugt: …" (ingen tidsregistrering).')
     + (invoicing() && !innaMaterial ? ` Materialet ${INNA_MATERIAL_NUMBER} blev ikke fundet i Propbinder, så der kan ikke faktureres.` : '')
     + (missing.length ? ` Findes ikke i Propbinder: ${missing.join(', ')}.` : '');
 }
@@ -536,7 +541,7 @@ function validate() {
   if (!$('title').value.trim()) errors.push('Mangler titel');
   if (!$('type').value) errors.push('Mangler type');
   const invoice = invoicing();
-  if (!invoice && !$('pricegroup').value) errors.push('Mangler timetype');
+  if (registersTime() && !$('pricegroup').value) errors.push('Mangler timetype');
   if (mode() === 'inna') {
     if (invoice && !innaMaterial) errors.push(`Materialet ${INNA_MATERIAL_NUMBER} findes ikke i Propbinder`);
     const rows = innaRows().filter((r) => r.timeText || r.countText);
@@ -683,7 +688,7 @@ async function createOne(input, slot) {
     });
     await api(`api/Activity/MarkAsBillable/${id}`, { method: 'PATCH', body: {} });
     await api('api/Activity/UpdateInvoiceCategory', { method: 'PATCH', body: { activityId: id, invoiceCategoryId: DEFAULT_INVOICE_CATEGORY } });
-  } else {
+  } else if (input.registerTime) {
     await api('api/Activity/AddActivityTimeSpent', {
       method: 'POST',
       body: {
@@ -715,6 +720,7 @@ $('create').addEventListener('click', async () => {
   };
   const currentMode = mode();
   const invoice = invoicing();
+  const registerTime = registersTime();
   const distinct = new Set(all.filter((job) => job.target).map((job) => job.target.number)).size;
 
   busy = true;
@@ -722,8 +728,8 @@ $('create').addEventListener('click', async () => {
   $('reset').disabled = true;
   $('log').replaceChildren();
   try {
-    if (!invoice) setMessage('Tjekker for overlap med dine andre tidsregistreringer ...');
-    if (!invoice && await hasConflict(all)
+    if (registerTime) setMessage('Tjekker for overlap med dine andre tidsregistreringer ...');
+    if (registerTime && await hasConflict(all)
       && !confirm('Tidsrummet overlapper med tidsregistreringer, du allerede har i Propbinder.\n\nVil du oprette opgaverne alligevel? Du kan også annullere og ændre "Første opgave starter".')) {
       setMessage('Annulleret. Intet er oprettet.');
       return;
@@ -733,7 +739,7 @@ $('create').addEventListener('click', async () => {
       : currentMode === 'inna'
         ? `fordelt på ${distinct} INNA-ejendom${distinct === 1 ? '' : 'me'}, ${invoice
           ? `med i alt ${hoursText(all.reduce((s, j) => s + j.hours, 0))} timer til fakturering`
-          : 'uden fakturering (med tidsregistrering)'}`
+          : 'uden fakturering (tiden skrives i beskrivelsen)'}`
         : (all[0].target ? `på ${short(all[0].target)}` : 'uden ejendom');
     if (!confirm(`Opret ${all.length} opgave${all.length === 1 ? '' : 'r'} i Propbinder med titlen "${input.title}", ${where}?`)) {
       setMessage('Annulleret. Intet er oprettet.');
@@ -753,6 +759,8 @@ $('create').addEventListener('click', async () => {
           propertyId: target ? target.id : null,
           customerId: target ? target.customerId : null,
           invoiceHours: invoice ? all[i].hours : null,
+          registerTime,
+          description: invoice || registerTime ? input.description : withTimeNote(input.description, all[i].minutes),
         }, all[i]);
         created++;
         if (currentMode === 'cibus') local.set(ROTATION_KEY, target.number);
