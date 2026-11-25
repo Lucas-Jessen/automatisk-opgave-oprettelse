@@ -119,7 +119,12 @@ footer{font-size:12px;color:var(--muted);padding:25px 30px 35px}
             <div id="inna-rows"></div>
           </details>
         </div>
-        <label class="wide" id="property-field">Ejendomsnummer <span class="opt">(valgfri)</span><input id="property" list="property-list" inputmode="numeric" placeholder="F.eks. 40104" autocomplete="off"><datalist id="property-list"></datalist><span class="hint" id="property-name" aria-live="polite"></span></label>
+        <div class="wide" id="property-field">
+          <label>Ejendomsnumre <span class="opt">(valgfri, adskil flere med komma)</span><input id="property" list="property-list" placeholder="F.eks. 40104 eller 40104, 37856, 38183" autocomplete="off"><datalist id="property-list"></datalist></label>
+          <p class="hint" id="property-name" aria-live="polite"></p>
+          <label class="check" id="spread-field" hidden><input id="spread" type="checkbox"> Fordel antallet ligeligt på ejendommene</label>
+          <p class="hint" id="spread-info" hidden></p>
+        </div>
         <label id="minutes-field">Tid pr. opgave (minutter) *<input id="minutes" type="number" min="1" max="480" step="1" inputmode="numeric" required placeholder="f.eks. 3"></label>
         <label id="count-field">Antal opgaver *<input id="count" type="number" min="1" max="200" step="1" inputmode="numeric" required placeholder="f.eks. 10"></label>
         <label class="wide">Første opgave starter<input id="start" type="datetime-local" step="60"><span class="hint">Opgaverne lægges i forlængelse af hinanden. Som standard slutter den sidste opgave nu.</span></label>
@@ -360,22 +365,46 @@ function numbers() {
   return { minutes: Number($('minutes').value), count: Number($('count').value) };
 }
 
-// Matches on the property number; text after the number (e.g. a pasted "40104 Lundvej 9") is ignored.
-function selectedProperty() {
-  const text = $('property').value.trim();
-  if (!text) return { id: null };
-  const number = (text.match(/^\d+/) || [])[0];
-  const match = number && properties.find((p) => p.number === number);
-  return match || { invalid: true };
+// One or more property numbers, separated by comma, semicolon, line break or space
+// ("40104, 37856" or "40104 37856"). A part with text after the number, e.g. a pasted
+// "40104 Lundvej 9", counts as that number. Duplicates are ignored.
+// Returns { list: [property], invalid: [text that matched no property] }.
+function selectedProperties() {
+  const parts = $('property').value.split(/[,;\n]+/).map((part) => part.trim()).filter(Boolean)
+    .flatMap((part) => (/^\d+(\s+\d+)+$/.test(part) ? part.split(/\s+/) : [part]));
+  const list = [];
+  const invalid = [];
+  for (const part of parts) {
+    const number = (part.match(/^\d+/) || [])[0];
+    const match = number && properties.find((p) => p.number === number);
+    if (!match) invalid.push(part);
+    else if (!list.includes(match)) list.push(match);
+  }
+  return { list, invalid };
 }
+
+// Spread "Antal opgaver" round-robin over the properties, or give every property the full count.
+const spreadOn = () => $('spread').checked;
 
 function updatePropertyName() {
   const hint = $('property-name');
-  const property = selectedProperty();
-  hint.style.color = property.invalid ? 'var(--red)' : '';
-  hint.textContent = property.invalid ? 'Ingen ejendom med det nummer.' : (property.id ? `${property.number} · ${property.name}` : '');
+  const { list, invalid } = selectedProperties();
+  hint.style.color = invalid.length ? 'var(--red)' : '';
+  hint.textContent = invalid.length
+    ? `Ingen ejendom med ${invalid.length === 1 ? 'nummeret' : 'numrene'}: ${invalid.join(', ')}.`
+    : list.map((p) => `${p.number} · ${p.name}`).join('; ');
+  const several = list.length > 1;
+  $('spread-field').hidden = !several;
+  $('spread-info').hidden = !several;
+  const { count } = numbers();
+  const n = Number.isInteger(count) && count > 0 ? count : null;
+  $('spread-info').textContent = !several ? ''
+    : spreadOn()
+      ? `${n ? `De ${n} opgaver` : 'Opgaverne'} fordeles på skift over de ${list.length} ejendomme.`
+      : `Hver af de ${list.length} ejendomme får ${n ? `${n} opgave${n === 1 ? '' : 'r'}` : 'det fulde antal opgaver'}${n ? ` (${n * list.length} i alt)` : ''}.`;
 }
 $('property').addEventListener('input', updatePropertyName);
+$('spread').addEventListener('change', () => { updatePropertyName(); setDefaultStart(false); updateSummary(); });
 
 const short = (p) => `${p.number} ${p.name}`;
 
@@ -526,8 +555,10 @@ function jobs() {
   const { minutes, count } = numbers();
   if (!(Number.isInteger(count) && count > 0 && count <= MAX_COUNT)) return [];
   if (m === 'cibus') return cibusPlan(count).map((target) => ({ minutes, target }));
-  const single = selectedProperty();
-  return Array.from({ length: count }, () => ({ minutes, target: single.id ? single : null }));
+  const { list } = selectedProperties();
+  if (!list.length) return Array.from({ length: count }, () => ({ minutes, target: null }));
+  if (list.length === 1 || spreadOn()) return Array.from({ length: count }, (_, i) => ({ minutes, target: list[i % list.length] }));
+  return list.flatMap((target) => Array.from({ length: count }, () => ({ minutes, target })));
 }
 
 const validMinutes = (n) => Number.isInteger(n) && n >= 1 && n <= 480;
@@ -557,7 +588,8 @@ function validate() {
     const { minutes, count } = numbers();
     if (!validMinutes(minutes)) errors.push('Tid skal være et helt antal minutter (1-480)');
     if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) errors.push(`Antal opgaver skal være mellem 1 og ${MAX_COUNT}`);
-    if (mode() === 'single' && selectedProperty().invalid) errors.push('Der findes ingen ejendom med det ejendomsnummer. Ret nummeret, eller tøm feltet');
+    const { invalid } = mode() === 'single' ? selectedProperties() : { invalid: [] };
+    if (invalid.length) errors.push(`Der findes ingen ejendom med ${invalid.length === 1 ? 'nummeret' : 'numrene'} ${invalid.join(', ')}. Ret ${invalid.length === 1 ? 'det' : 'dem'}, eller fjern ${invalid.length === 1 ? 'det' : 'dem'}`);
   }
   if (jobs().length > MAX_COUNT) errors.push(`Højst ${MAX_COUNT} opgaver ad gangen i alt`);
   if (!$('start').value || Number.isNaN(new Date($('start').value).getTime())) errors.push('Mangler starttidspunkt');
@@ -605,7 +637,7 @@ function updateSummary() {
     + (list.length > MAX_COUNT ? ` · Højst ${MAX_COUNT} ad gangen` : '');
 }
 
-['minutes', 'count'].forEach((id) => $(id).addEventListener('input', () => { setDefaultStart(false); updateSummary(); }));
+['minutes', 'count'].forEach((id) => $(id).addEventListener('input', () => { updatePropertyName(); setDefaultStart(false); updateSummary(); }));
 $('property').addEventListener('input', updateSummary);
 $('start').addEventListener('input', () => { startTouched = true; updateSummary(); });
 
@@ -740,7 +772,9 @@ $('create').addEventListener('click', async () => {
         ? `fordelt på ${distinct} INNA-ejendom${distinct === 1 ? '' : 'me'}, ${invoice
           ? `med i alt ${hoursText(all.reduce((s, j) => s + j.hours, 0))} timer til fakturering`
           : 'uden fakturering (tiden skrives i beskrivelsen)'}`
-        : (all[0].target ? `på ${short(all[0].target)}` : 'uden ejendom');
+        : distinct > 1
+          ? `fordelt på ${distinct} ejendomme (${spreadOn() ? 'ligeligt' : 'det fulde antal på hver'})`
+          : (all[0].target ? `på ${short(all[0].target)}` : 'uden ejendom');
     if (!confirm(`Opret ${all.length} opgave${all.length === 1 ? '' : 'r'} i Propbinder med titlen "${input.title}", ${where}?`)) {
       setMessage('Annulleret. Intet er oprettet.');
       return;
