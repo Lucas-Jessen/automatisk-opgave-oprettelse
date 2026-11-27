@@ -162,6 +162,7 @@ const CIBUS_PREF_KEY = 'cibus-enabled';
 // entered hours as quantity, is marked "Fakturerbar" and gets the default invoice category
 // (the same steps as Produkter → Tilføj materiale, Fakturerbar and Gem in Propbinder).
 const INNA_MATERIAL_NUMBER = '1011-103';    // Ejendomsinspektør alm. timetakst
+const INNA_TIMETYPE = 'Fakturerbare opgaver'; // the task's Timetype on invoiced INNA tasks
 const DEFAULT_INVOICE_CATEGORY = 'c17abd94-fa3d-42ab-8260-46f251a18a16';
 const INNA_NUMBERS = new Set([
   '38195', '38183', '38201', '38199', '38184', '37642', '38191', '38189', '38196', '37612',
@@ -188,6 +189,7 @@ let properties = [];        // [{ id, number, name, cibus }]
 let cibusProperties = [];   // the Cibus subset, sorted by number
 let innaProperties = [];    // the INNA subset, sorted by number
 let innaMaterial = null;    // { number, name, costPrice, salesPrice } from Propbinder's material list
+let innaPriceGroupId = null; // Timetype "Fakturerbare opgaver", set on invoiced INNA tasks
 let busy = false;
 
 function normalizeBearer(value) {
@@ -294,6 +296,8 @@ async function loadData() {
     api('api/Materials/GetMaterials').catch(() => []),
   ]);
   innaMaterial = (Array.isArray(materials) ? materials : []).find((m) => String(m.number).trim() === INNA_MATERIAL_NUMBER) || null;
+  const innaPriceGroup = (priceGroups || []).find((p) => String(p.name).trim() === INNA_TIMETYPE);
+  innaPriceGroupId = innaPriceGroup ? innaPriceGroup.priceGroupId : null;
   const id = info.StakeholderId || info.stakeholderId;
   const self = (Array.isArray(users) ? users : []).find((user) => user.userId === id) || {};
   me = { id, name: info.Name || info.name || self.name || '', departmentId: self.departmentId || null };
@@ -518,7 +522,7 @@ function updateInna() {
   info.textContent = (!innaOn()
     ? `${innaProperties.length} ejendomme. Slå til for at angive tid og antal pr. ejendom.`
     : invoicing()
-      ? `Udfyld tid (timer) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Hver opgave faktureres: tiden sættes som antal af ${material}, og opgaven markeres som fakturerbar. Der laves ingen tidsregistrering.`
+      ? `Udfyld tid (timer) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Hver opgave faktureres: tiden sættes som antal af ${material}, opgaven markeres som fakturerbar og får timetypen "${INNA_TIMETYPE}". Der laves ingen tidsregistrering.`
       : 'Udfyld tid (minutter) og antal ud for de ejendomme, der skal have opgaver. Titel og beskrivelse ovenfor bruges på dem alle. Opgaverne faktureres ikke. Ligesom ved Cibus skrives tiden nederst i beskrivelsen som "Tid brugt: …" (ingen tidsregistrering).')
     + (invoicing() && !innaMaterial ? ` Materialet ${INNA_MATERIAL_NUMBER} blev ikke fundet i Propbinder, så der kan ikke faktureres.` : '')
     + (missing.length ? ` Findes ikke i Propbinder: ${missing.join(', ')}.` : '');
@@ -575,6 +579,7 @@ function validate() {
   if (registersTime() && !$('pricegroup').value) errors.push('Mangler timetype');
   if (mode() === 'inna') {
     if (invoice && !innaMaterial) errors.push(`Materialet ${INNA_MATERIAL_NUMBER} findes ikke i Propbinder`);
+    if (invoice && !innaPriceGroupId) errors.push(`Timetypen "${INNA_TIMETYPE}" findes ikke i Propbinder`);
     const rows = innaRows().filter((r) => r.timeText || r.countText);
     if (!rows.some((r) => Number(r.countText) > 0)) errors.push('Angiv antal ud for mindst én INNA-ejendom');
     for (const r of rows) {
@@ -698,7 +703,7 @@ async function createOne(input, slot) {
     priorityId: null,
     description: input.description,
     assignedToStakeholder: me.id,
-    recurring: null, recurrance: null, priceGroupId: null, note: '',
+    recurring: null, recurrance: null, priceGroupId: input.invoiceHours ? innaPriceGroupId : null, note: '',
     dvAccountPlanId: null, dvCategoryId: null,
     departmentId: me.departmentId,
     taskRecurrence: null, markAsInvoice: false, isNew: true, includeHolidays: false,
